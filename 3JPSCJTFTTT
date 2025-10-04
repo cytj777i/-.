@@ -1,0 +1,44 @@
+local HttpService = game:GetService("HttpService")
+
+local whitelist = {
+    "RewardEvent",
+    "variableserver",
+    "Lab",
+    "Event",
+    "RequestLuckyTool",
+    "TsunamiUIEvent",
+    -- 根据你的需求继续添加远程名
+}
+
+local function prettyArgs(args)
+    local out = {}
+    for i,v in ipairs(args) do
+        if typeof(v) == "table" then
+            table.insert(out, HttpService:JSONEncode(v)) -- table转JSON，美化显示
+        elseif typeof(v) == "Instance" then
+            table.insert(out, tostring(v) .. "[" .. v.ClassName .. "]")
+        elseif typeof(v) == "Vector3" then
+            table.insert(out, string.format("Vector3(%f, %f, %f)", v.X, v.Y, v.Z))
+        elseif typeof(v) == "CFrame" then
+            table.insert(out, "CFrame")
+        else
+            table.insert(out, tostring(v))
+        end
+    end
+    return table.concat(out, ", ")
+end
+
+local mt = getrawmetatable(game)
+local old = mt.__namecall
+setreadonly(mt, false)
+
+mt.__namecall = function(self, ...)
+    local method = getnamecallmethod()
+    local name = self.Name
+    if (method == "FireServer" or method == "InvokeServer") and table.find(whitelist, name) then
+        print(string.format("[HOOK][%s] %s -> %s", method, name, prettyArgs({...})))
+    end
+    return old(self, ...)
+end
+
+setreadonly(mt, true)
