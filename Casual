@@ -7,12 +7,11 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RobloxReplicatedStorage = game:GetService("RobloxReplicatedStorage")
 local JointsService = game:GetService("JointsService")
 local UserInputService = game:GetService("UserInputService")
-
 local LocalPlayer = Players.LocalPlayer
 
--- UI界面创建（可拖动、输入、远程选择、状态提示）
+-- UI界面
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "后门扫描器"
+ScreenGui.Name = "漏洞远程执行工具"
 ScreenGui.Parent = CoreGui
 ScreenGui.ResetOnSpawn = false
 
@@ -29,7 +28,7 @@ Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 18)
 local Title = Instance.new("TextLabel", MainFrame)
 Title.Size = UDim2.new(1, 0, 0, 38)
 Title.Position = UDim2.new(0, 0, 0, 0)
-Title.Text = "后门扫描器 & 多远程漏洞执行"
+Title.Text = "漏洞远程执行工具（多远程可选）"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.Fondamento
