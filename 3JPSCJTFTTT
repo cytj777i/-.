@@ -1,239 +1,280 @@
--- 增强版奖励追踪脚本 - 专注于上下文信息收集
+-- hook代码追踪器
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
-local RunService = game:GetService("RunService")
 
--- 配置
-local config = {
-    enhancedLogging = true, -- 增强日志记录
-    scanRemotesOnStart = true, -- 启动时扫描远程对象
-    trackPlayerContext = true -- 追踪玩家上下文
+print("hook程序开始运行")
+
+-- 存储最近的活动记录
+local recentActivities = {
+    remoteCalls = {},
+    valueChanges = {}
 }
 
--- 存储状态
-local playerState = {
-    position = Vector3.new(0, 0, 0),
-    health = 100,
-    character = nil,
-    nearbyObjects = {}
-}
-
--- 增强的上下文记录
-local function captureEnvironmentContext()
-    local context = {}
+-- 1. 核心：元表Hook（捕获所有远程调用）
+local function installCoreHook()
+    if not getrawmetatable or not setreadonly then
+        print("❌ 环境不支持元表操作")
+        return false
+    end
     
-    -- 记录玩家基础信息
-    pcall(function()
-        if localPlayer.Character then
-            local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
-            local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local success, mt = pcall(getrawmetatable, game)
+    if not success or not mt then
+        print("❌ 无法获取游戏元表")
+        return false
+    end
+    
+    local originalNamecall = mt.__namecall
+    pcall(setreadonly, mt, false)
+    
+    mt.__namecall = function(self, ...)
+        local method = getnamecallmethod()
+        if method == "FireServer" or method == "InvokeServer" then
+            local args = {...}
+            local remotePath = tostring(self:GetFullName())
             
-            if humanoid then
-                playerState.health = humanoid.Health
-                context.health = humanoid.Health
+            -- 安全地记录远程调用
+            table.insert(recentActivities.remoteCalls, {
+                path = remotePath,
+                method = method,
+                args = args,
+                timestamp = os.time()
+            })
+            
+            -- 只保留最近10个调用
+            if #recentActivities.remoteCalls > 10 then
+                table.remove(recentActivities.remoteCalls, 1)
             end
             
-            if rootPart then
-                playerState.position = rootPart.Position
-                context.position = {
-                    x = math.floor(rootPart.Position.X),
-                    y = math.floor(rootPart.Position.Y),
-                    z = math.floor(rootPart.Position.Z)
-                }
-                
-                -- 记录附近物体
-                local nearby = {}
-                for _, obj in ipairs(workspace:GetChildren()) do
-                    if obj:IsA("Part") and obj ~= rootPart then
-                        local distance = (rootPart.Position - obj.Position).Magnitude
-                        if distance < 30 then
-                            table.insert(nearby, {
-                                name = obj.Name,
-                                distance = math.floor(distance)
-                            })
-                        end
-                    end
-                end
-                context.nearby = nearby
+            print("\n🔥 远程调用捕获: " .. remotePath .. "." .. method)
+            for i, arg in ipairs(args) do
+                print("   ["..i.."] " .. typeof(arg) .. " = " .. tostring(arg))
             end
         end
-    end)
+        
+        return originalNamecall(self, ...)
+    end
     
-    -- 记录游戏数据
+    pcall(setreadonly, mt, true)
+    print("✅ 核心Hook安装成功")
+    return true
+end
+
+-- 2. 修复的数值变化监控
+local function monitorValueChanges()
+    print("💰 启动数值变化监控...")
+    
+    local lastValues = {}
+    
+    local function safeMonitorStat(stat)
+        if not stat or not stat.Changed then
+            print("❌ 无效的统计对象: " .. tostring(stat))
+            return
+        end
+        
+        lastValues[stat] = stat.Value
+        
+        stat.Changed:Connect(function(newValue)
+            local oldValue = lastValues[stat] or 0
+            if newValue ~= oldValue and newValue > oldValue then
+                local changeAmount = newValue - oldValue
+                local statName = tostring(stat.Name)
+                
+                -- 安全地记录数值变化
+                table.insert(recentActivities.valueChanges, {
+                    statName = statName,
+                    oldValue = oldValue,
+                    newValue = newValue,
+                    change = changeAmount,
+                    timestamp = os.time()
+                })
+                
+                -- 只保留最近5个变化
+                if #recentActivities.valueChanges > 5 then
+                    table.remove(recentActivities.valueChanges, 1)
+                end
+                
+                print("\n💎 检测到奖励! " .. statName .. " +" .. changeAmount)
+                print("⏰ 时间: " .. os.date("%H:%M:%S"))
+                
+                -- 安全地分析活动
+                safeAnalyzeRecentActivities(statName, changeAmount)
+            end
+            
+            lastValues[stat] = newValue
+        end)
+    end
+    
+    -- 安全地监控玩家数据
     pcall(function()
         local leaderstats = localPlayer:FindFirstChild("leaderstats")
         if leaderstats then
-            context.stats = {}
             for _, stat in ipairs(leaderstats:GetChildren()) do
                 if stat:IsA("IntValue") or stat:IsA("NumberValue") then
-                    context.stats[stat.Name] = stat.Value
+                    safeMonitorStat(stat)
                 end
+            end
+        else
+            print("⚠️ 未找到leaderstats，尝试监控其他数据...")
+            -- 监控背包等其他可能的位置
+            local backpack = localPlayer:FindFirstChild("Backpack")
+            if backpack then
+                backpack.ChildAdded:Connect(function(item)
+                    print("\n🎒 获得新物品: " .. item.Name)
+                    safeAnalyzeRecentActivities("Item", 1)
+                end)
             end
         end
     end)
-    
-    return context
 end
 
--- 增强的奖励日志记录
-local function logEnhancedReward(eventName, method, args)
-    local context = captureEnvironmentContext()
+-- 3. 修复的分析函数（重点修复第91行）
+local function safeAnalyzeRecentActivities(statName, changeAmount)
+    print("\n🔍 分析奖励来源...")
     
-    print("\n🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁")
-    print("🎁 奖励事件触发!")
-    print("🎁 事件: " .. eventName .. "." .. method)
-    print("🎁 参数: " .. tostring(args and #args or 0) .. " 个参数")
+    -- 安全检查
+    if not recentActivities or not recentActivities.remoteCalls then
+        print("❌ 活动记录未初始化")
+        return
+    end
     
-    if args then
-        for i, arg in ipairs(args) do
-            local argType = typeof(arg)
-            print("   📌 参数 " .. i .. ": [" .. argType .. "] " .. tostring(arg))
+    local recentRemoteCalls = recentActivities.remoteCalls
+    local currentTime = os.time()
+    local suspectedCalls = {}
+    
+    -- 安全地查找最近30秒内的远程调用
+    for i, call in ipairs(recentRemoteCalls) do
+        if call and call.timestamp and (currentTime - call.timestamp) <= 30 then
+            table.insert(suspectedCalls, call)
         end
     end
     
-    -- 显示环境上下文
-    print("🎁 环境上下文:")
-    if context.position then
-        print("   📍 位置: X=" .. context.position.x .. ", Y=" .. context.position.y .. ", Z=" .. context.position.z)
-    end
-    
-    if context.health then
-        print("   ❤️ 生命值: " .. context.health)
-    end
-    
-    if context.stats then
-        print("   📊 游戏数据:")
-        for statName, value in pairs(context.stats) do
-            print("      " .. statName .. ": " .. tostring(value))
-        end
-    end
-    
-    if context.nearby and #context.nearby > 0 then
-        print("   🏷️ 附近物体:")
-        for i, obj in ipairs(context.nearby) do
-            if i <= 5 then -- 限制显示数量
-                print("      - " .. obj.name .. " (" .. obj.distance .. " 米)")
+    if #suspectedCalls > 0 then
+        print("🎯 找到 " .. #suspectedCalls .. " 个可能的奖励代码:")
+        
+        for i, call in ipairs(suspectedCalls) do
+            if call.path and call.method then
+                print("   " .. i .. ". " .. call.path .. "." .. call.method)
+                
+                -- 安全检查参数
+                if call.args and type(call.args) == "table" then
+                    for j, arg in ipairs(call.args) do
+                        if tostring(arg) == tostring(changeAmount) or 
+                           tostring(arg):lower():find(statName:lower()) then
+                            print("      💡 参数匹配: " .. tostring(arg))
+                        end
+                    end
+                end
             end
         end
-        if #context.nearby > 5 then
-            print("      ... 还有 " .. (#context.nearby - 5) .. " 个物体")
+        
+        -- 最可能的是最后一个调用
+        local mostLikely = suspectedCalls[#suspectedCalls]
+        if mostLikely and mostLikely.path then
+            print("\n🎁 最可能的奖励代码:")
+            print("   📍 " .. mostLikely.path .. "." .. mostLikely.method .. "()")
+            
+            if mostLikely.args then
+                print("   🎯 参数: " .. #mostLikely.args .. " 个")
+                for i, arg in ipairs(mostLikely.args) do
+                    print("      ["..i.."] " .. typeof(arg) .. ": " .. tostring(arg))
+                end
+            end
         end
-    end
-    
-    print("🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁\n")
-end
-
--- 主动扫描远程对象
-local function scanRemoteObjects()
-    print("🔍 开始扫描游戏中的远程对象...")
-    
-    local remoteLocations = {
-        game:GetService("ReplicatedStorage"),
-        workspace,
-        game:GetService("ServerScriptService"),
-        game:GetService("ServerStorage"),
-        game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"),
-        game:GetService("StarterPlayer"):FindFirstChild("StarterCharacterScripts"),
-        localPlayer:FindFirstChild("PlayerScripts")
-    }
-    
-    local foundEvents = {}
-    local foundFunctions = {}
-    
-    for _, location in ipairs(remoteLocations) do
-        if location then
+        
+    else
+        print("❌ 未找到相关的远程调用")
+        print("💡 可能通过以下方式获得奖励:")
+        print("   - 本地脚本直接修改")
+        print("   - 服务器直接同步")
+        print("   - 特殊网络协议")
+        
+        -- 显示所有已知的远程对象
+        print("\n📡 已知的远程对象:")
+        local locations = {game:GetService("ReplicatedStorage"), workspace}
+        for _, location in ipairs(locations) do
             pcall(function()
-                for _, child in ipairs(location:GetDescendants()) do
-                    if child:IsA("RemoteEvent") then
-                        foundEvents[child.Name] = true
-                    elseif child:IsA("RemoteFunction") then
-                        foundFunctions[child.Name] = true
+                for _, obj in ipairs(location:GetDescendants()) do
+                    if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+                        local name = obj.Name:lower()
+                        if name:find("reward") or name:find("money") or name:find("coin") then
+                            print("   - " .. obj:GetFullName())
+                        end
                     end
                 end
             end)
         end
     end
-    
-    -- 输出扫描结果
-    local eventNames = {}
-    for name in pairs(foundEvents) do
-        table.insert(eventNames, name)
-    end
-    
-    local functionNames = {}
-    for name in pairs(foundFunctions) do
-        table.insert(functionNames, name)
-    end
-    
-    table.sort(eventNames)
-    table.sort(functionNames)
-    
-    print("📋 扫描结果:")
-    print("   RemoteEvents: " .. #eventNames .. " 个")
-    for i, name in ipairs(eventNames) do
-        print("   - " .. name)
-    end
-    
-    print("   RemoteFunctions: " .. #functionNames .. " 个")
-    for i, name in ipairs(functionNames) do
-        print("   - " .. name)
-    end
-    
-    return {
-        events = foundEvents,
-        functions = foundFunctions
-    }
 end
 
--- 设置监控
-local function setupMonitoring()
-    local scannedRemotes = scanRemoteObjects()
+-- 4. 简单的远程对象扫描作为备用
+local function simpleRemoteScan()
+    print("📡 扫描远程对象作为备用...")
     
-    local mt = getrawmetatable(game)
-    local oldNamecall = mt.__namecall
+    local locations = {
+        game:GetService("ReplicatedStorage"),
+        workspace
+    }
     
-    setreadonly(mt, false)
-    
-    mt.__namecall = function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        
-        if method == "FireServer" or method == "InvokeServer" then
-            local success, name = pcall(function() return self.Name end)
-            
-            if success and name then
-                -- 记录所有远程调用（或者只记录奖励相关的）
-                local isRewardRelated = string.lower(name):find("reward") or 
-                                      string.lower(name):find("claim") or
-                                      string.lower(name):find("award") or
-                                      string.lower(name):find("prize")
-                
-                if isRewardRelated then
-                    logEnhancedReward(name, method, args)
-                else
-                    -- 可选：记录所有远程调用用于分析
-                    -- print("[监控] " .. name .. "." .. method)
+    for _, location in ipairs(locations) do
+        pcall(function()
+            for _, obj in ipairs(location:GetDescendants()) do
+                if obj:IsA("RemoteEvent") then
+                    local oldFire = obj.FireServer
+                    obj.FireServer = function(self, ...)
+                        local args = {...}
+                        local path = tostring(self:GetFullName())
+                        
+                        table.insert(recentActivities.remoteCalls, {
+                            path = path,
+                            method = "FireServer",
+                            args = args,
+                            timestamp = os.time()
+                        })
+                        
+                        if #recentActivities.remoteCalls > 10 then
+                            table.remove(recentActivities.remoteCalls, 1)
+                        end
+                        
+                        print("📡 直接Hook: " .. path)
+                        return oldFire(self, ...)
+                    end
                 end
             end
-        end
-        
-        return oldNamecall(self, ...)
+        end)
     end
-    
-    setreadonly(mt, true)
-    
-    print("✅ 增强监控已启动!")
-    print("💡 正在追踪奖励事件和环境上下文...")
 end
 
--- 启动脚本
-if config.scanRemotesOnStart then
-    delay(2, function()
-        setupMonitoring()
+-- 主启动函数
+local function startTracking()
+    print("🚀 启动修复版奖励追踪系统...")
+    
+    -- 初始化活动记录
+    recentActivities = {
+        remoteCalls = {},
+        valueChanges = {}
+    }
+    
+    -- 安装核心Hook
+    local hookSuccess = pcall(installCoreHook)
+    
+    if not hookSuccess then
+        print("🔄 使用备用Hook方案...")
+        pcall(simpleRemoteScan)
+    end
+    
+    -- 启动数值监控
+    pcall(monitorValueChanges)
+    
+    print("✅ 系统就绪!")
+    print("💎 检测到奖励: Money +265353")
+    print("🔍 现在分析奖励来源...")
+    
+    -- 立即进行一次分析测试
+    pcall(function()
+        safeAnalyzeRecentActivities("Money", 265353)
     end)
 end
 
-return {
-    rescan = scanRemoteObjects,
-    getConfig = function() return config end
-}
+-- 延迟启动
+task.wait(3)
+startTracking()
