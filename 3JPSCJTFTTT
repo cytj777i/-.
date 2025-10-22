@@ -1,249 +1,218 @@
--- 超强罗布乐思奖励追踪脚本 - 优化版
--- 确保能在控制台看到奖励触发代码
-
-local HttpService = game:GetService("HttpService")
+-- 增强版奖励追踪脚本 - 专注于上下文信息收集
 local Players = game:GetService("Players")
 local localPlayer = Players.LocalPlayer
+local RunService = game:GetService("RunService")
 
--- 配置区域 - 优化配置
+-- 配置
 local config = {
-    logToFile = false, -- 先关闭文件记录，专注控制台输出
-    logFileName = "reward_tracker.log",
-    learningMode = true, -- 开启学习模式发现所有事件
-    showCallStack = true, -- 显示调用堆栈定位代码
-    captureAllRemotes = true, -- 捕获所有远程事件进行学习
-    highlightRewards = true,
-    simpleOutput = true -- 简化输出格式
+    enhancedLogging = true, -- 增强日志记录
+    scanRemotesOnStart = true, -- 启动时扫描远程对象
+    trackPlayerContext = true -- 追踪玩家上下文
 }
 
--- 白名单（学习模式会自动发现并添加）
-local whitelist = {
-    "RewardEvent", "Reward", "GetReward", "ClaimReward",
-    "Award", "Prize", "Loot", "Drop", "Gift", "Bonus",
-    "variableserver", "Lab", "Event", "RequestLuckyTool", 
-    "TsunamiUIEvent", "DailyReward", "QuestReward", "MissionReward",
-    "LevelUp", "Achievement", "Collect", "OpenChest", "SpinWheel",
-    "Currency", "Coins", "Gems", "Money", "EXP", "Experience"
+-- 存储状态
+local playerState = {
+    position = Vector3.new(0, 0, 0),
+    health = 100,
+    character = nil,
+    nearbyObjects = {}
 }
 
--- 已发现的远程事件
-local discoveredEvents = {}
-
--- 增强日志函数 - 确保控制台输出
-local function logMessage(message, isReward)
-    local timestamp = os.date("%H:%M:%S")
-    local formattedMessage = ""
+-- 增强的上下文记录
+local function captureEnvironmentContext()
+    local context = {}
     
-    if config.simpleOutput then
-        -- 简化输出格式
-        if isReward then
-            formattedMessage = string.format("🎁 [%s] 奖励事件: %s", timestamp, message)
-            -- 在支持颜色的环境中使用醒目标记
-            if rconsoleprint then
-                rconsoleprint("@@LIGHT_RED@@")
-                rconsoleprint(formattedMessage)
-                rconsoleprint("@@WHITE@@\n")
-            else
-                print(formattedMessage)
-            end
-        else
-            formattedMessage = string.format("[%s] %s", timestamp, message)
-            print(formattedMessage)
-        end
-    else
-        -- 完整输出格式
-        local prefix = isReward and "🎁 [奖励事件] " or "[远程监控] "
-        formattedMessage = string.format("[%s]%s %s", timestamp, prefix, message)
-        print(formattedMessage)
-    end
-    
-    -- 文件记录（可选）
-    if config.logToFile and writefile then
-        pcall(function()
-            if not isfile(config.logFileName) then
-                writefile(config.logFileName, "奖励追踪日志\n创建时间: " .. os.date() .. "\n\n")
-            end
-            appendfile(config.logFileName, formattedMessage .. "\n")
-        end)
-    end
-end
-
--- 获取调用堆栈 - 定位触发代码的关键
-local function getCallStack()
-    if not config.showCallStack then
-        return ""
-    end
-    
-    local stack = "\n调用堆栈:"
-    local foundScript = false
-    
-    for i = 3, 15 do -- 增加深度以找到更多相关信息
-        local info = debug.info(i, "sl")
-        if not info or not info.source then break end
-        
-        local source = string.gsub(info.source, "^@", "")
-        local line = info.currentline > 0 and info.currentline or "?"
-        
-        -- 过滤掉系统脚本，专注于游戏脚本
-        if not string.find(source, "CoreScript") and 
-           not string.find(source, "CoreGui") and
-           not string.find(source, "Promise") then
+    -- 记录玩家基础信息
+    pcall(function()
+        if localPlayer.Character then
+            local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
+            local rootPart = localPlayer.Character:FindFirstChild("HumanoidRootPart")
             
-            -- 高亮显示可能的游戏脚本
-            local isGameScript = string.find(source, "Workspace") or 
-                               string.find(source, "PlayerScripts") or
-                               string.find(source, "ReplicatedFirst") or
-                               string.find(source, "ReplicatedStorage") or
-                               string.find(source, "ServerStorage") or
-                               string.find(source, "Lighting")
+            if humanoid then
+                playerState.health = humanoid.Health
+                context.health = humanoid.Health
+            end
             
-            if isGameScript then
-                stack = stack .. string.format("\n%s:%s", source, line)
-                foundScript = true
-            else
-                stack = stack .. string.format("\n   %s:%s", source, line)
+            if rootPart then
+                playerState.position = rootPart.Position
+                context.position = {
+                    x = math.floor(rootPart.Position.X),
+                    y = math.floor(rootPart.Position.Y),
+                    z = math.floor(rootPart.Position.Z)
+                }
+                
+                -- 记录附近物体
+                local nearby = {}
+                for _, obj in ipairs(workspace:GetChildren()) do
+                    if obj:IsA("Part") and obj ~= rootPart then
+                        local distance = (rootPart.Position - obj.Position).Magnitude
+                        if distance < 30 then
+                            table.insert(nearby, {
+                                name = obj.Name,
+                                distance = math.floor(distance)
+                            })
+                        end
+                    end
+                end
+                context.nearby = nearby
             end
+        end
+    end)
+    
+    -- 记录游戏数据
+    pcall(function()
+        local leaderstats = localPlayer:FindFirstChild("leaderstats")
+        if leaderstats then
+            context.stats = {}
+            for _, stat in ipairs(leaderstats:GetChildren()) do
+                if stat:IsA("IntValue") or stat:IsA("NumberValue") then
+                    context.stats[stat.Name] = stat.Value
+                end
+            end
+        end
+    end)
+    
+    return context
+end
+
+-- 增强的奖励日志记录
+local function logEnhancedReward(eventName, method, args)
+    local context = captureEnvironmentContext()
+    
+    print("\n🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁")
+    print("🎁 奖励事件触发!")
+    print("🎁 事件: " .. eventName .. "." .. method)
+    print("🎁 参数: " .. tostring(args and #args or 0) .. " 个参数")
+    
+    if args then
+        for i, arg in ipairs(args) do
+            local argType = typeof(arg)
+            print("   📌 参数 " .. i .. ": [" .. argType .. "] " .. tostring(arg))
         end
     end
     
-    if not foundScript then
-        stack = stack .. "\n   (未找到明确的游戏脚本位置)"
+    -- 显示环境上下文
+    print("🎁 环境上下文:")
+    if context.position then
+        print("   📍 位置: X=" .. context.position.x .. ", Y=" .. context.position.y .. ", Z=" .. context.position.z)
     end
     
-    return stack
-end
-
--- 参数美化函数 - 优化显示
-local function prettyArgs(args, depth)
-    depth = depth or 0
-    if depth > 2 then return "..." end
+    if context.health then
+        print("   ❤️ 生命值: " .. context.health)
+    end
     
-    local out = {}
-    
-    for i, v in ipairs(args) do
-        local vType = typeof(v)
-        
-        if vType == "table" then
-            if next(v) == nil then
-                table.insert(out, "{}")
-            else
-                table.insert(out, "table[...]")
-            end
-        elseif vType == "Instance" then
-            local name = pcall(function() return v.Name end) and v.Name or "Unknown"
-            local class = pcall(function() return v.ClassName end) and v.ClassName or "Unknown"
-            table.insert(out, string.format("%s[%s]", name, class))
-        elseif vType == "Vector3" then
-            table.insert(out, string.format("Vector3(%.0f,%.0f,%.0f)", v.X, v.Y, v.Z))
-        elseif vType == "CFrame" then
-            table.insert(out, "CFrame")
-        elseif vType == "number" then
-            table.insert(out, tostring(v))
-        elseif vType == "string" then
-            if #v > 50 then
-                table.insert(out, string.format("%q...", v:sub(1, 47)))
-            else
-                table.insert(out, string.format("%q", v))
-            end
-        else
-            table.insert(out, tostring(v))
+    if context.stats then
+        print("   📊 游戏数据:")
+        for statName, value in pairs(context.stats) do
+            print("      " .. statName .. ": " .. tostring(value))
         end
     end
     
-    return table.concat(out, ", ")
+    if context.nearby and #context.nearby > 0 then
+        print("   🏷️ 附近物体:")
+        for i, obj in ipairs(context.nearby) do
+            if i <= 5 then -- 限制显示数量
+                print("      - " .. obj.name .. " (" .. obj.distance .. " 米)")
+            end
+        end
+        if #context.nearby > 5 then
+            print("      ... 还有 " .. (#context.nearby - 5) .. " 个物体")
+        end
+    end
+    
+    print("🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁🎁\n")
 end
 
--- 检测奖励事件 - 增强检测逻辑
-local function isRewardEvent(eventName, args)
-    local nameLower = eventName:lower()
+-- 主动扫描远程对象
+local function scanRemoteObjects()
+    print("🔍 开始扫描游戏中的远程对象...")
     
-    -- 奖励关键词检测
-    local rewardKeywords = {
-        "reward", "prize", "award", "loot", "drop", "gift", "bonus",
-        "collect", "chest", "wheel", "daily", "quest", "mission",
-        "achievement", "levelup", "level", "win", "victory", "complete",
-        "coin", "gem", "money", "cash", "currency", "point", "exp", "experience",
-        "token", "crystal", "diamond", "gold", "silver", "bronze"
+    local remoteLocations = {
+        game:GetService("ReplicatedStorage"),
+        workspace,
+        game:GetService("ServerScriptService"),
+        game:GetService("ServerStorage"),
+        game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"),
+        game:GetService("StarterPlayer"):FindFirstChild("StarterCharacterScripts"),
+        localPlayer:FindFirstChild("PlayerScripts")
     }
     
-    for _, keyword in ipairs(rewardKeywords) do
-        if string.find(nameLower, keyword) then
-            return true
+    local foundEvents = {}
+    local foundFunctions = {}
+    
+    for _, location in ipairs(remoteLocations) do
+        if location then
+            pcall(function()
+                for _, child in ipairs(location:GetDescendants()) do
+                    if child:IsA("RemoteEvent") then
+                        foundEvents[child.Name] = true
+                    elseif child:IsA("RemoteFunction") then
+                        foundFunctions[child.Name] = true
+                    end
+                end
+            end)
         end
     end
     
-    -- 参数内容检测
-    local argsStr = HttpService:JSONEncode(args):lower()
-    local valueIndicators = {
-        "amount", "value", "count", "quantity", "points", "exp", "xp",
-        "coin", "gem", "money", "cash", "reward", "prize"
+    -- 输出扫描结果
+    local eventNames = {}
+    for name in pairs(foundEvents) do
+        table.insert(eventNames, name)
+    end
+    
+    local functionNames = {}
+    for name in pairs(foundFunctions) do
+        table.insert(functionNames, name)
+    end
+    
+    table.sort(eventNames)
+    table.sort(functionNames)
+    
+    print("📋 扫描结果:")
+    print("   RemoteEvents: " .. #eventNames .. " 个")
+    for i, name in ipairs(eventNames) do
+        print("   - " .. name)
+    end
+    
+    print("   RemoteFunctions: " .. #functionNames .. " 个")
+    for i, name in ipairs(functionNames) do
+        print("   - " .. name)
+    end
+    
+    return {
+        events = foundEvents,
+        functions = foundFunctions
     }
-    
-    for _, indicator in ipairs(valueIndicators) do
-        if string.find(argsStr, indicator) then
-            return true
-        end
-    end
-    
-    return false
 end
 
--- 初始化事件列表
-for _, event in ipairs(whitelist) do
-    discoveredEvents[event] = true
-end
-
--- 主Hook逻辑 - 确保能捕获所有相关事件
-local function setupHooks()
-    -- 检查环境兼容性
-    if not getrawmetatable or not getnamecallmethod then
-        logMessage("当前环境不支持元表Hook，脚本无法运行", false)
-        return false
-    end
+-- 设置监控
+local function setupMonitoring()
+    local scannedRemotes = scanRemoteObjects()
     
     local mt = getrawmetatable(game)
-    if not mt then
-        logMessage("无法获取游戏元表", false)
-        return false
-    end
-    
     local oldNamecall = mt.__namecall
-    if not oldNamecall then
-        logMessage("元表缺少__namecall方法", false)
-        return false
-    end
     
     setreadonly(mt, false)
     
-    -- 主Hook函数
     mt.__namecall = function(self, ...)
         local method = getnamecallmethod()
-        local success, name = pcall(function() return self.Name end)
         local args = {...}
         
-        if success and name and (method == "FireServer" or method == "InvokeServer") then
-            local shouldLog = config.captureAllRemotes or 
-                             discoveredEvents[name] or 
-                             (config.learningMode and not discoveredEvents[name])
+        if method == "FireServer" or method == "InvokeServer" then
+            local success, name = pcall(function() return self.Name end)
             
-            if shouldLog then
-                -- 学习模式：记录新事件
-                if config.learningMode and not discoveredEvents[name] then
-                    discoveredEvents[name] = true
-                    logMessage("发现新远程事件: " .. name, false)
-                end
+            if success and name then
+                -- 记录所有远程调用（或者只记录奖励相关的）
+                local isRewardRelated = string.lower(name):find("reward") or 
+                                      string.lower(name):find("claim") or
+                                      string.lower(name):find("award") or
+                                      string.lower(name):find("prize")
                 
-                -- 判断奖励事件
-                local isReward = config.highlightRewards and isRewardEvent(name, args)
-                
-                -- 准备输出信息
-                local argString = prettyArgs(args)
-                local callStack = getCallStack()
-                
-                if isReward then
-                    logMessage(string.format("🚨 触发奖励: %s.%s(%s)%s", name, method, argString, callStack), true)
+                if isRewardRelated then
+                    logEnhancedReward(name, method, args)
                 else
-                    logMessage(string.format("%s.%s(%s)%s", name, method, argString, callStack), false)
+                    -- 可选：记录所有远程调用用于分析
+                    -- print("[监控] " .. name .. "." .. method)
                 end
             end
         end
@@ -252,62 +221,19 @@ local function setupHooks()
     end
     
     setreadonly(mt, true)
-    return true
+    
+    print("✅ 增强监控已启动!")
+    print("💡 正在追踪奖励事件和环境上下文...")
 end
 
 -- 启动脚本
-logMessage("开始初始化奖励追踪脚本...", false)
-
-local success, err = pcall(function()
-    return setupHooks()
-end)
-
-if success then
-    logMessage("脚本初始化成功! 开始监控游戏奖励...", false)
-    logMessage("在游戏中获得奖励时，会显示 🎁 或 🚨 标记的事件", false)
-    logMessage("学习模式已开启，正在发现所有远程事件...", false)
-    
-    -- 添加定期状态报告
-    delay(10, function()
-        local eventCount = 0
-        for _ in pairs(discoveredEvents) do eventCount = eventCount + 1 end
-        logMessage(string.format("已发现 %d 个远程事件，继续监控中...", eventCount), false)
+if config.scanRemotesOnStart then
+    delay(2, function()
+        setupMonitoring()
     end)
-    
-else
-    logMessage("脚本初始化失败: " .. tostring(err), false)
-    logMessage("建议: 尝试在其它执行环境中运行此脚本", false)
 end
 
--- 实用功能
-local function showDiscoveredEvents()
-    local events = {}
-    for name in pairs(discoveredEvents) do
-        table.insert(events, name)
-    end
-    table.sort(events)
-    
-    logMessage("已发现的远程事件列表:", false)
-    for i, event in ipairs(events) do
-        logMessage("   " .. i .. ". " .. event, false)
-    end
-    return events
-end
-
--- 返回控制接口
 return {
-    showEvents = showDiscoveredEvents,
-    toggleLearning = function()
-        config.learningMode = not config.learningMode
-        logMessage("学习模式: " .. (config.learningMode and "开启" or "关闭"), false)
-    end,
-    addEvent = function(eventName)
-        discoveredEvents[eventName] = true
-        logMessage("已监控事件: " .. eventName, false)
-    end,
-    getStats = function()
-        local count = 0
-        for _ in pairs(discoveredEvents) do count = count + 1 end
-        return {totalEvents = count}
-    end
+    rescan = scanRemoteObjects,
+    getConfig = function() return config end
 }
